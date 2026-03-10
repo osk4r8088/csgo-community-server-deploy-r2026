@@ -8,7 +8,8 @@ Hosting a Counter-Strike: Global Offensive dedicated server using Valve's 2026 s
 - 35 GB disk space
 - 2+ GB RAM
 - SteamCMD
-- A GSLT (Game Server Login Token) for app **4465480** — get one at [steamcommunity.com/dev/managegameservers](https://steamcommunity.com/dev/managegameservers)
+- A GSLT (Game Server Login Token) for app **4465480**
+get one at [steamcommunity.com/dev/managegameservers](https://steamcommunity.com/dev/managegameservers)
 
 ## Quick Start
 

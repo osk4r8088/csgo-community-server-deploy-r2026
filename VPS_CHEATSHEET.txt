@@ -1,0 +1,76 @@
+========================================
+  CS:GO 2026 Server - VPS Cheatsheet
+  VPS: 194.163.151.122 (Contabo, Ubuntu 24.04)
+  SSH: ssh oskar@194.163.151.122
+========================================
+
+--- SERVER CONTROL ---
+screen -S csgo /srv/csgo-host/start.sh    # start server in screen
+screen -r csgo                             # reattach to screen
+Ctrl+A then D                              # detach from screen (keeps running)
+screen -ls                                 # list screens
+# Type "quit" in server console to stop
+
+--- SERVER CONSOLE COMMANDS (inside screen) ---
+status                                     # show connected players + server info
+meta list                                  # list MetaMod plugins
+sm plugins list                            # list SourceMod plugins
+changelevel de_mirage                      # change map
+sm plugins reload NoLobbyReservation       # reload a plugin
+maps *                                     # list available maps
+
+--- FILE LOCATIONS ---
+/srv/csgo-host/                            # server install (35 GB game files)
+/srv/csgo-host/start.sh                    # launch script
+/srv/csgo-host/csgo/cfg/server.cfg         # game settings
+/srv/csgo-host/csgo/addons/               # MetaMod + SourceMod
+/srv/csgo-host/csgo/addons/metamod.vdf    # MetaMod loader config
+/srv/csgo-host/csgo/addons/sourcemod/plugins/              # compiled plugins (.smx)
+/srv/csgo-host/csgo/addons/sourcemod/plugins/disabled/     # disabled plugins
+/srv/csgo-host/csgo/addons/sourcemod/configs/databases.cfg # plugin databases
+/srv/csgo-host/csgo/addons/sourcemod/gamedata/             # plugin signatures
+/srv/csgo-host/csgo/addons/sourcemod/logs/                 # SourceMod error logs
+/srv/csgo-host/csgo/logs/                  # server logs
+/srv/csgo/.env                             # passwords + GSLT token
+
+--- NETWORK ---
+ss -tulpen | grep 27015                    # check if port 27015 is listening
+sudo ufw status | grep 27015              # firewall rules
+# Ports needed: 27015/udp (game), 27015/tcp (RCON), outbound to Steam
+
+--- DIAGNOSTICS ---
+cat /srv/csgo-host/csgo/addons/sourcemod/logs/errors_*.log | tail -30   # SM errors
+grep appID /srv/csgo-host/csgo/steam.inf                                # verify app ID
+cat /srv/csgo-host/steam_appid.txt                                      # verify app ID file
+cat /srv/csgo-host/csgo/addons/metamod.vdf                              # verify VDF path
+
+--- SYSTEM ---
+df -h /                                    # disk usage
+free -h                                    # memory usage
+htop                                       # process monitor (q to quit)
+
+--- CLIENT CONNECT ---
+connect 194.163.151.122:27015; password <SERVER_PASSWORD>
+
+--- QUICK FIXES ---
+# Recompile NoLobbyReservation:
+cd /srv/csgo-host/csgo/addons/sourcemod/scripting
+./spcomp NoLobbyReservation.sp -o ../plugins/NoLobbyReservation.smx
+
+# Fix databases.cfg: copy from local repo addons/sourcemod/configs/databases.cfg
+
+# Edit .env:
+nano /srv/csgo/.env
+
+--- RULES / LIMITATIONS ---
+- Claude cannot SSH into VPS — user runs all commands manually
+- Always verify before deleting anything
+- Docker does NOT work for CS:GO srcds (SteamAPI IPC fails in container)
+- NoLobbyReservation (eldoradoel fork) is REQUIRED for 2026 client connections
+- metamod.vdf path must be "../csgo/addons/metamod/bin/server"
+- SteamCMD validate restores bundled libgcc_s.so.1 — start.sh removes it every boot
+- steam.inf gets overwritten by SteamCMD validate — start.sh patches it every boot
+- Competitive gamemode config overrides server.cfg settings on map change
+- VPS username is oskar (not osk)
+- Other services running: Caddy, Authentik, Element/Synapse/Coturn, app.ospw.de
+- VPS has 8 GB RAM, no resource limits on srcds (unlike Docker's 2 GB cap)

@@ -50,7 +50,7 @@ quit
 screen -ls
 
 # Connect from client
-connect 194.163.151.122:27015; password os-csgo004489!
+connect 194.163.151.122:27015; password YOURpassword
 ```
 
 ### Next steps (priority order)

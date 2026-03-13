@@ -1,0 +1,38 @@
+[Unit]
+Description=CS:GO 2026 Dedicated Server (ospw)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=oskar
+Group=oskar
+WorkingDirectory=/srv/csgo-host
+
+# Default mode is competitive. Override with:
+#   systemctl edit csgo  -> add [Service] Environment="CSGO_MODE=surf"
+#   or edit this file directly
+Environment="CSGO_MODE=competitive"
+
+# Uses the wrapper for auto-restart on mode switch
+ExecStart=/srv/csgo-host/csgo-wrapper.sh ${CSGO_MODE}
+ExecStop=/bin/kill -SIGINT $MAINPID
+
+Restart=on-failure
+RestartSec=15
+
+# Give srcds time to flush logs on shutdown
+TimeoutStopSec=30
+
+# Security hardening
+ProtectHome=read-only
+NoNewPrivileges=true
+PrivateTmp=true
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=csgo
+
+[Install]
+WantedBy=multi-user.target

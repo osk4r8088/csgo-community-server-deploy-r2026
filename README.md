@@ -132,7 +132,7 @@ connect YOUR_SERVER_IP:27015; password YOUR_PASSWORD
 
 ### How mode switching works
 
-The server uses a **restart-based** approach for mode switching. Hot-swapping plugins at runtime doesn't work reliably — cvars from the previous mode persist, `game_type` can't change, and plugin state gets corrupted.
+The server uses a **restart-based** approach for mode switching. Hot-swapping plugins at runtime doesn't work reliably, cvars from the previous mode persist, `game_type` can't change, and plugin state gets corrupted.
 
 ```
                     +-----------------+
@@ -158,14 +158,14 @@ The server uses a **restart-based** approach for mode switching. Hot-swapping pl
 ```
 
 **Files involved:**
-- `csgo-wrapper.sh` — Outer loop. Reads `pendingmode.txt`, starts `start.sh` with the correct mode, auto-restarts on exit.
-- `start.sh` — Per-boot setup. Deactivates all mode plugins, activates only the ones needed, sets `game_type`/`game_mode`, copies the right mapcycle, then `exec`s srcds.
-- `modeswitch.sp` — SourceMod plugin (always loaded). Handles `!modes` command, auto-rotation votes, periodic tips. Writes `pendingmode.txt` and calls `quit` to trigger restart.
+- `csgo-wrapper.sh` : Outer loop. Reads `pendingmode.txt`, starts `start.sh` with the correct mode, auto-restarts on exit.
+- `start.sh` : Per-boot setup. Deactivates all mode plugins, activates only the ones needed, sets `game_type`/`game_mode`, copies the right mapcycle, then `exec`s srcds.
+- `modeswitch.sp` : SourceMod plugin (always loaded). Handles `!modes` command, auto-rotation votes, periodic tips. Writes `pendingmode.txt` and calls `quit` to trigger restart.
 
 **State files** (in `addons/sourcemod/data/`):
-- `currentmode.txt` — Written by wrapper on each boot. Read by modeswitch.sp to detect current mode.
-- `pendingmode.txt` — Written by modeswitch.sp when a switch is requested. Read and deleted by wrapper.
-- `pendingmap.txt` — Optional map override (written by modeswitch.sp, read by wrapper, passed to start.sh).
+- `currentmode.txt` : Written by wrapper on each boot. Read by modeswitch.sp to detect current mode.
+- `pendingmode.txt` : Written by modeswitch.sp when a switch is requested. Read and deleted by wrapper.
+- `pendingmap.txt` : Optional map override (written by modeswitch.sp, read by wrapper, passed to start.sh).
 
 ### Plugin management
 
@@ -174,8 +174,8 @@ All mode-specific plugins live in `plugins/disabled/`. On each boot, `start.sh`:
 2. Copies only the plugins needed for the selected mode from `disabled/` to `plugins/`
 
 **Permanent plugins** (always in `plugins/`, never touched):
-- `NoLobbyReservation.smx` — Required for client connections
-- `modeswitch.smx` — Mode switching, rotation, tips
+- `NoLobbyReservation.smx` : Required for client connections
+- `modeswitch.smx` : Mode switching, rotation, tips
 
 ---
 

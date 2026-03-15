@@ -588,7 +588,6 @@ cd /srv/csgo-host/csgo/addons/sourcemod/scripting
 
 - **Retake mode** — needs testing with 2+ players; spawn configs downloaded but may need `!edit` tuning
 - **Arena 1v1** — needs testing with 2 players after bot_quota fix
-- **Surf zones** — need manual setup per map via `!zones`
 - **FastDL** — currently an ephemeral python HTTP server, needs a proper systemd service
 - **srcds systemd** — csgo.service works but hasn't been battle-tested with the wrapper
 

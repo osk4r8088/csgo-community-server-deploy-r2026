@@ -1,16 +1,14 @@
 // ============================================================================
-// ospw CS:GO — Mode Switch Plugin (v3.0 — rotation + vote)
+// ospw CS:GO — Mode Switch Plugin (v4.1 — chat-based voting)
 // ============================================================================
-// Auto-rotates modes after a configurable number of maps per mode.
-// When rotation triggers, all players vote on the next mode.
-// Manual switch via !modes (triggers vote) or !modes <name> (admin direct).
+// Players: !switchmode (RTV-style, 60% threshold → chat vote)
+// Admins:  !modes     (direct menu-based switch)
+//          !map/!maps (admin map change)
 //
-// Commands:
-//   !modes         - Opens mode vote for all players
-//   !modes <name>  - Admin direct switch (no vote)
-//   !map <name>    - Admin map change within current mode
-//   !maps          - Admin map selection menu
-//   !currentmode   - Shows current mode
+// Regular players vote entirely in CHAT — no menus pop up.
+// When 60% of players type !switchmode, a mode poll starts in chat.
+// Players vote by typing "1", "2", "3", etc. in chat.
+// Auto-rotation also uses the same chat-based vote system.
 //
 // Deploy: addons/sourcemod/plugins/modeswitch.smx (always loaded)
 // ============================================================================
@@ -30,6 +28,12 @@
 #define MODE_DM          3
 #define MODE_ARENA       4
 #define MODE_KZ          5
+
+// Fraction of players needed to trigger !switchmode vote
+#define SWITCHMODE_FRACTION 0.60
+
+// Vote duration in seconds
+#define VOTE_DURATION 25
 
 char g_sModeIDs[MODE_COUNT][] = {
     "competitive",
@@ -59,7 +63,6 @@ char g_sModeConfigs[MODE_COUNT][] = {
 };
 
 // Maps to play per mode before auto-rotation vote triggers
-// comp=1 match, retake=1, surf=1, dm=2, arena=1 (30 rounds), kz=1
 int g_iModeMapLimit[MODE_COUNT] = {
     1,  // competitive — 1 full match
     1,  // retake
@@ -72,15 +75,22 @@ int g_iModeMapLimit[MODE_COUNT] = {
 // ── State ───────────────────────────────────────────────────────────────────
 int g_iCurrentMode = MODE_COMPETITIVE;
 int g_iMapsPlayed = 0;
-bool g_bRotationVoteActive = false;
 Handle g_hTipTimer = INVALID_HANDLE;
 
-// Vote tracking
-int g_iVotes[MODE_COUNT];
-bool g_bHasVoted[MAXPLAYERS + 1];
-Handle g_hVoteTimer = INVALID_HANDLE;
+// RTV-style switchmode requests
+bool g_bWantsModeSwitch[MAXPLAYERS + 1];
+int g_iSwitchModeRequests = 0;
 
-// Manual switch
+// Chat-based vote state
+bool g_bChatVoteActive = false;
+int g_iChatVotes[MODE_COUNT];
+bool g_bHasChatVoted[MAXPLAYERS + 1];
+Handle g_hChatVoteTimer = INVALID_HANDLE;
+// Which modes are voteable (excludes current mode)
+int g_iVoteOptions[MODE_COUNT];  // maps option number (1-based) → mode index
+int g_iVoteOptionCount = 0;
+
+// Switch countdown
 Handle g_hSwitchTimer = INVALID_HANDLE;
 int g_iPendingMode = -1;
 int g_iCountdown = 0;
@@ -94,8 +104,8 @@ ArrayList g_hMapFiles[MODE_COUNT];
 public Plugin myinfo = {
     name        = "ospw Mode Switch",
     author      = "ospw",
-    description = "Mode rotation with voting for multi-mode CS:GO server",
-    version     = "3.0.0",
+    description = "Chat-based mode voting for multi-mode CS:GO server",
+    version     = "4.1.0",
     url         = "https://github.com/osk4r8088/csgo-server-ospw2026"
 };
 
@@ -113,22 +123,30 @@ public void OnPluginStart()
 
     LoadMapConfig();
 
-    // !modes — admin only (auto-rotation vote is the democratic part)
-    RegAdminCmd("sm_modes", Cmd_Modes, ADMFLAG_CHANGEMAP, "Switch game mode (admin direct or vote)");
-    // !map / !maps — admin only
+    // Player commands (no admin required)
+    RegConsoleCmd("sm_switchmode", Cmd_SwitchMode, "Request a mode switch (60% threshold)");
+
+    // Admin commands
+    RegAdminCmd("sm_modes", Cmd_Modes, ADMFLAG_CHANGEMAP, "Admin mode switch menu or direct switch");
     RegAdminCmd("sm_map", Cmd_Map, ADMFLAG_CHANGEMAP, "Change map within current mode");
     RegAdminCmd("sm_maps", Cmd_Map, ADMFLAG_CHANGEMAP, "Alias for sm_map");
-    RegConsoleCmd("sm_currentmode", Cmd_CurrentMode, "Show current game mode");
+
+    // Listen for chat messages (for "1", "2", "3" voting)
+    AddCommandListener(Cmd_Say, "say");
+    AddCommandListener(Cmd_Say, "say_team");
 
     DetectCurrentMode();
 
-    LogMessage("[ModeSwitch] v3.0 loaded. Mode: %s | Maps played: %d / %d",
+    LogMessage("[ModeSwitch] v4.1 loaded. Mode: %s | Maps played: %d / %d",
         g_sModeIDs[g_iCurrentMode], g_iMapsPlayed, g_iModeMapLimit[g_iCurrentMode]);
 }
 
 public void OnMapStart()
 {
     g_iMapsPlayed++;
+
+    // Reset all vote/switch state
+    CancelAllVoteState();
 
     // Re-exec mode config to override Valve defaults
     if (g_iCurrentMode != MODE_COMPETITIVE)
@@ -147,7 +165,6 @@ public void OnMapStart()
     // Check if rotation should trigger
     if (g_iMapsPlayed > g_iModeMapLimit[g_iCurrentMode])
     {
-        // Delay vote slightly so players load in
         CreateTimer(20.0, Timer_AutoRotationVote, _, TIMER_FLAG_NO_MAPCHANGE);
         PrintToChatAll(" \x04[ospw]\x01 Mode rotation in 20 seconds — get ready to vote!");
     }
@@ -164,7 +181,46 @@ public void OnMapStart()
 
 public void OnClientDisconnect(int client)
 {
-    g_bHasVoted[client] = false;
+    if (g_bWantsModeSwitch[client])
+    {
+        g_bWantsModeSwitch[client] = false;
+        g_iSwitchModeRequests--;
+        if (g_iSwitchModeRequests < 0) g_iSwitchModeRequests = 0;
+    }
+    g_bHasChatVoted[client] = false;
+}
+
+// ============================================================================
+// State management
+// ============================================================================
+
+void CancelAllVoteState()
+{
+    // Reset switchmode requests
+    for (int i = 0; i <= MAXPLAYERS; i++)
+    {
+        g_bWantsModeSwitch[i] = false;
+        g_bHasChatVoted[i] = false;
+    }
+    g_iSwitchModeRequests = 0;
+
+    // Reset chat vote
+    g_bChatVoteActive = false;
+    g_iVoteOptionCount = 0;
+    for (int i = 0; i < MODE_COUNT; i++)
+        g_iChatVotes[i] = 0;
+
+    if (g_hChatVoteTimer != INVALID_HANDLE)
+    {
+        KillTimer(g_hChatVoteTimer);
+        g_hChatVoteTimer = INVALID_HANDLE;
+    }
+
+    if (g_hSwitchTimer != INVALID_HANDLE)
+    {
+        KillTimer(g_hSwitchTimer);
+        g_hSwitchTimer = INVALID_HANDLE;
+    }
 }
 
 // ============================================================================
@@ -264,20 +320,56 @@ void DetectCurrentMode()
 }
 
 // ============================================================================
-// !modes command
+// !switchmode — RTV-style, 60% threshold, then chat vote
+// ============================================================================
+
+public Action Cmd_SwitchMode(int client, int args)
+{
+    if (!IsValidClient(client))
+        return Plugin_Handled;
+
+    if (g_bChatVoteActive)
+    {
+        PrintToChat(client, " \x04[ospw]\x01 A mode vote is already in progress! Vote by typing a number in chat.");
+        return Plugin_Handled;
+    }
+
+    if (g_bWantsModeSwitch[client])
+    {
+        PrintToChat(client, " \x04[ospw]\x01 You already requested a mode switch.");
+        return Plugin_Handled;
+    }
+
+    g_bWantsModeSwitch[client] = true;
+    g_iSwitchModeRequests++;
+
+    int playerCount = GetRealPlayerCount();
+    int needed = RoundToCeil(float(playerCount) * SWITCHMODE_FRACTION);
+    if (needed < 1) needed = 1;
+
+    char name[64];
+    GetClientName(client, name, sizeof(name));
+    PrintToChatAll(" \x04[ospw]\x01 %s wants to switch mode! (\x03%d\x01/\x03%d\x01 needed)",
+        name, g_iSwitchModeRequests, needed);
+
+    if (g_iSwitchModeRequests >= needed)
+    {
+        PrintToChatAll(" \x04[ospw]\x01 Enough players want to switch — starting mode vote!");
+        StartChatVote();
+    }
+
+    return Plugin_Handled;
+}
+
+// ============================================================================
+// !modes — Admin only, menu-based direct switch
 // ============================================================================
 
 public Action Cmd_Modes(int client, int args)
 {
+    // Direct switch by name: !modes surf
     if (args > 0)
     {
-        // Direct switch — admin only
-        if (!CheckCommandAccess(client, "sm_map", ADMFLAG_CHANGEMAP, false))
-        {
-            ReplyToCommand(client, "[SM] You don't have access to direct mode switch. Use !modes to vote.");
-            return Plugin_Handled;
-        }
-
         char modeName[32];
         GetCmdArg(1, modeName, sizeof(modeName));
 
@@ -294,24 +386,55 @@ public Action Cmd_Modes(int client, int args)
             return Plugin_Handled;
         }
 
-        // Admin direct switch — no vote, immediate countdown
+        CancelAllVoteState();
         StartDirectSwitch(mode);
         return Plugin_Handled;
     }
 
-    // No args — start a mode vote
-    if (g_bRotationVoteActive)
+    // No args — show admin mode menu
+    Menu menu = new Menu(AdminModeMenuHandler);
+    menu.SetTitle("Admin Mode Switch");
+    menu.ExitButton = true;
+
+    for (int i = 0; i < MODE_COUNT; i++)
     {
-        ReplyToCommand(client, "[SM] A mode vote is already active!");
-        return Plugin_Handled;
+        char info[8];
+        IntToString(i, info, sizeof(info));
+
+        char display[64];
+        if (i == g_iCurrentMode)
+            Format(display, sizeof(display), "%s [CURRENT]", g_sModeNames[i]);
+        else
+            Format(display, sizeof(display), "%s", g_sModeNames[i]);
+
+        menu.AddItem(info, display, (i == g_iCurrentMode) ? ITEMDRAW_DISABLED : ITEMDRAW_DEFAULT);
     }
 
-    StartModeVote();
+    menu.Display(client, 30);
     return Plugin_Handled;
 }
 
+public int AdminModeMenuHandler(Menu menu, MenuAction action, int client, int item)
+{
+    if (action == MenuAction_Select)
+    {
+        char info[8];
+        menu.GetItem(item, info, sizeof(info));
+        int mode = StringToInt(info);
+
+        if (mode >= 0 && mode < MODE_COUNT && mode != g_iCurrentMode)
+        {
+            CancelAllVoteState();
+            StartDirectSwitch(mode);
+        }
+    }
+    else if (action == MenuAction_End)
+        delete menu;
+    return 0;
+}
+
 // ============================================================================
-// !map command (admin only)
+// !map / !maps — Admin map change
 // ============================================================================
 
 public Action Cmd_Map(int client, int args)
@@ -411,124 +534,118 @@ public int MapMenuHandler(Menu menu, MenuAction action, int client, int item)
 }
 
 // ============================================================================
-// !currentmode
-// ============================================================================
-
-public Action Cmd_CurrentMode(int client, int args)
-{
-    char currentMap[PLATFORM_MAX_PATH];
-    GetCurrentMap(currentMap, sizeof(currentMap));
-    int remaining = g_iModeMapLimit[g_iCurrentMode] - g_iMapsPlayed + 1;
-    if (remaining < 0) remaining = 0;
-    ReplyToCommand(client, "[SM] Mode: %s | Map: %s | Maps left: %d",
-        g_sModeNames[g_iCurrentMode], currentMap, remaining);
-    return Plugin_Handled;
-}
-
-// ============================================================================
-// Mode Vote System
+// Chat-Based Mode Vote System
 // ============================================================================
 
 public Action Timer_AutoRotationVote(Handle timer)
 {
-    StartModeVote();
+    StartChatVote();
     return Plugin_Stop;
 }
 
-void StartModeVote()
+void StartChatVote()
 {
-    if (g_bRotationVoteActive)
+    if (g_bChatVoteActive)
         return;
 
-    g_bRotationVoteActive = true;
-
-    // Reset votes
-    for (int i = 0; i < MODE_COUNT; i++)
-        g_iVotes[i] = 0;
-    for (int i = 0; i <= MAXPLAYERS; i++)
-        g_bHasVoted[i] = false;
-
-    // Show vote menu to all real players
-    int playerCount = 0;
-    for (int i = 1; i <= MaxClients; i++)
-    {
-        if (IsClientInGame(i) && !IsFakeClient(i))
-        {
-            ShowVoteMenu(i);
-            playerCount++;
-        }
-    }
-
+    int playerCount = GetRealPlayerCount();
     if (playerCount == 0)
     {
         // No players — pick random mode
-        g_bRotationVoteActive = false;
         int nextMode = GetRandomModeExcept(g_iCurrentMode);
         DoModeSwitch(nextMode);
         return;
     }
 
-    PrintToChatAll(" \x04=============================================");
-    PrintToChatAll(" \x04[ospw]\x01 VOTE: Choose the next game mode!");
-    PrintToChatAll(" \x04[ospw]\x01 You have 20 seconds to vote.");
-    PrintToChatAll(" \x04=============================================");
+    g_bChatVoteActive = true;
 
-    g_hVoteTimer = CreateTimer(20.0, Timer_TallyVotes, _, TIMER_FLAG_NO_MAPCHANGE);
-}
+    // Reset votes
+    for (int i = 0; i < MODE_COUNT; i++)
+        g_iChatVotes[i] = 0;
+    for (int i = 0; i <= MAXPLAYERS; i++)
+        g_bHasChatVoted[i] = false;
 
-void ShowVoteMenu(int client)
-{
-    Menu menu = new Menu(VoteMenuHandler);
-    menu.SetTitle("Vote: Next Game Mode");
-    menu.ExitButton = false;
-
+    // Build vote options (exclude current mode)
+    g_iVoteOptionCount = 0;
     for (int i = 0; i < MODE_COUNT; i++)
     {
-        char info[8];
-        IntToString(i, info, sizeof(info));
-
-        char display[64];
-        if (i == g_iCurrentMode)
-            Format(display, sizeof(display), "%s [CURRENT]", g_sModeNames[i]);
-        else
-            Format(display, sizeof(display), "%s", g_sModeNames[i]);
-
-        menu.AddItem(info, display);
-    }
-
-    menu.Display(client, 20);
-}
-
-public int VoteMenuHandler(Menu menu, MenuAction action, int client, int item)
-{
-    if (action == MenuAction_Select)
-    {
-        if (!g_bHasVoted[client])
+        if (i != g_iCurrentMode)
         {
-            char info[8];
-            menu.GetItem(item, info, sizeof(info));
-            int mode = StringToInt(info);
-
-            if (mode >= 0 && mode < MODE_COUNT)
-            {
-                g_iVotes[mode]++;
-                g_bHasVoted[client] = true;
-
-                char name[64];
-                GetClientName(client, name, sizeof(name));
-                PrintToChatAll(" \x04[Vote]\x01 %s voted for \x03%s", name, g_sModeNames[mode]);
-            }
+            g_iVoteOptions[g_iVoteOptionCount] = i;
+            g_iVoteOptionCount++;
         }
     }
-    else if (action == MenuAction_End)
-        delete menu;
-    return 0;
+
+    // Print vote header
+    PrintToChatAll(" ");
+    PrintToChatAll(" \x04=============================================");
+    PrintToChatAll(" \x04[ospw]\x01 MODE VOTE — Type a number in chat to vote!");
+    PrintToChatAll(" \x04=============================================");
+
+    // Print options
+    for (int i = 0; i < g_iVoteOptionCount; i++)
+    {
+        int modeIdx = g_iVoteOptions[i];
+        PrintToChatAll(" \x04[ospw]\x01  \x03%d\x01 — %s", i + 1, g_sModeNames[modeIdx]);
+    }
+
+    PrintToChatAll(" ");
+    PrintToChatAll(" \x04[ospw]\x01 You have \x03%d seconds\x01 to vote. Type \x031\x01-\x03%d\x01 in chat!",
+        VOTE_DURATION, g_iVoteOptionCount);
+    PrintToChatAll(" ");
+
+    g_hChatVoteTimer = CreateTimer(float(VOTE_DURATION), Timer_TallyChatVotes, _, TIMER_FLAG_NO_MAPCHANGE);
 }
 
-public Action Timer_TallyVotes(Handle timer)
+// ============================================================================
+// Chat listener — captures "1", "2", "3" etc. during active vote
+// ============================================================================
+
+public Action Cmd_Say(int client, const char[] command, int argc)
 {
-    g_hVoteTimer = INVALID_HANDLE;
-    g_bRotationVoteActive = false;
+    if (!g_bChatVoteActive || !IsValidClient(client))
+        return Plugin_Continue;
+
+    char text[32];
+    GetCmdArgString(text, sizeof(text));
+
+    // Strip quotes
+    StripQuotes(text);
+    TrimString(text);
+
+    // Check for plain number ("1", "2", etc.)
+    int choice = StringToInt(text);
+
+    // StringToInt returns 0 for non-numeric, but "0" is also 0
+    // We only accept 1-based choices, so 0 is always invalid
+    if (choice < 1 || choice > g_iVoteOptionCount)
+        return Plugin_Continue;
+
+    if (g_bHasChatVoted[client])
+    {
+        PrintToChat(client, " \x04[ospw]\x01 You already voted!");
+        return Plugin_Handled;  // Suppress the chat message
+    }
+
+    int modeIdx = g_iVoteOptions[choice - 1];
+    g_iChatVotes[modeIdx]++;
+    g_bHasChatVoted[client] = true;
+
+    char name[64];
+    GetClientName(client, name, sizeof(name));
+    PrintToChatAll(" \x04[Vote]\x01 %s voted for \x03%s\x01 (%d)", name, g_sModeNames[modeIdx], choice);
+
+    return Plugin_Handled;  // Suppress the number from chat
+}
+
+// ============================================================================
+// Tally chat votes
+// ============================================================================
+
+public Action Timer_TallyChatVotes(Handle timer)
+{
+    g_hChatVoteTimer = INVALID_HANDLE;
+    g_bChatVoteActive = false;
 
     // Find winner
     int winnerMode = -1;
@@ -537,10 +654,10 @@ public Action Timer_TallyVotes(Handle timer)
 
     for (int i = 0; i < MODE_COUNT; i++)
     {
-        totalVotes += g_iVotes[i];
-        if (g_iVotes[i] > maxVotes)
+        totalVotes += g_iChatVotes[i];
+        if (g_iChatVotes[i] > maxVotes)
         {
-            maxVotes = g_iVotes[i];
+            maxVotes = g_iChatVotes[i];
             winnerMode = i;
         }
     }
@@ -549,10 +666,24 @@ public Action Timer_TallyVotes(Handle timer)
     if (totalVotes == 0 || winnerMode == -1)
     {
         winnerMode = GetRandomModeExcept(g_iCurrentMode);
-        PrintToChatAll(" \x04[ospw]\x01 No votes — randomly selected \x03%s\x01!", g_sModeNames[winnerMode]);
+        PrintToChatAll(" \x04[ospw]\x01 No votes cast — randomly selected \x03%s\x01!", g_sModeNames[winnerMode]);
     }
     else
     {
+        // If winner is current mode (shouldn't happen since we exclude it, but safety)
+        if (winnerMode == g_iCurrentMode)
+        {
+            g_iMapsPlayed = 0;
+            PrintToChatAll(" \x04[ospw]\x01 Players voted to stay in \x03%s\x01! Rotation reset.",
+                g_sModeNames[winnerMode]);
+
+            // Reset switchmode requests
+            for (int i = 0; i <= MAXPLAYERS; i++)
+                g_bWantsModeSwitch[i] = false;
+            g_iSwitchModeRequests = 0;
+            return Plugin_Stop;
+        }
+
         PrintToChatAll(" \x04[ospw]\x01 \x03%s\x01 wins with %d vote%s!",
             g_sModeNames[winnerMode], maxVotes, maxVotes == 1 ? "" : "s");
     }
@@ -608,7 +739,6 @@ void DoModeSwitch(int mode)
     if (mode < 0 || mode >= MODE_COUNT)
         return;
 
-    // Write pending mode
     char modePath[PLATFORM_MAX_PATH];
     BuildPath(Path_SM, modePath, sizeof(modePath), "data/pendingmode.txt");
     File f = OpenFile(modePath, "w");
@@ -649,21 +779,26 @@ public Action Timer_ReExecConfig(Handle timer)
 
 public Action Timer_ShowTips(Handle timer)
 {
-    // General tips (all modes)
-    PrintToChatAll(" \x04[ospw]\x01 Type \x03!ws !knife !gloves\x01 to set your skins!");
-    PrintToChatAll(" \x04[ospw]\x01 Type \x03!rtv\x01 to start a map vote | \x03!modes\x01 to switch game mode");
+    // Universal tips (all modes)
+    PrintToChatAll(" \x04[ospw]\x01 \x03!switchmode\x01 vote to change mode | \x03!rtv\x01 vote to change map");
+    PrintToChatAll(" \x04[ospw]\x01 \x03!ws !knife !gloves\x01 to set your skins!");
 
     // Mode-specific tips
     switch (g_iCurrentMode)
     {
         case MODE_KZ:
         {
-            PrintToChatAll(" \x04[ospw]\x01 Type \x03!menu\x01 to set & load checkpoints!");
-            PrintToChatAll(" \x04[ospw]\x01 Type \x03!options\x01 to configure your KZ settings");
+            PrintToChatAll(" \x04[ospw]\x01 \x03!menu\x01 checkpoints | \x03!options\x01 KZ settings");
+            PrintToChatAll(" \x04[ospw]\x01 \x03!start\x01 go to start | \x03!end\x01 go to end | \x03!nc\x01 noclip");
         }
         case MODE_SURF:
         {
-            PrintToChatAll(" \x04[ospw]\x01 Type \x03!r\x01 to restart | \x03!s\x01 to go back to start");
+            PrintToChatAll(" \x04[ospw]\x01 \x03!r\x01 restart | \x03!s\x01 go to start | \x03!end\x01 go to end");
+            PrintToChatAll(" \x04[ospw]\x01 \x03!nc\x01 noclip | \x03!start\x01 set start pos");
+        }
+        case MODE_RETAKE:
+        {
+            PrintToChatAll(" \x04[ospw]\x01 \x03!guns\x01 to choose your weapons");
         }
     }
 
@@ -691,4 +826,20 @@ int GetRandomModeExcept(int excludeMode)
         mode = GetRandomInt(0, MODE_COUNT - 1);
     } while (mode == excludeMode);
     return mode;
+}
+
+int GetRealPlayerCount()
+{
+    int count = 0;
+    for (int i = 1; i <= MaxClients; i++)
+    {
+        if (IsClientInGame(i) && !IsFakeClient(i))
+            count++;
+    }
+    return count;
+}
+
+bool IsValidClient(int client)
+{
+    return (client > 0 && client <= MaxClients && IsClientInGame(client) && !IsFakeClient(client));
 }

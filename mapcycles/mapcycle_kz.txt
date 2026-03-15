@@ -1,5 +1,6 @@
 kz_beginnerblock_go
-kz_checkmate
-kz_nature
-kz_olympus
-kz_reaching
+kz_rise
+kz_layercake
+kz_dejavu
+kz_dale
+kz_variety_fix

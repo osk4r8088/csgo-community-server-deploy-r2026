@@ -50,6 +50,48 @@ Complete history of decisions, bugs, fixes, and architecture insights. Reference
 
 ---
 
+## v1.1 — Chat Voting, Ramp Fix, Map Expansion (2026-03-15)
+
+### Changes
+
+**Modeswitch v4.1 — Chat-based voting**
+- Complete rewrite of voting system. Regular players no longer get menus (accidental key presses during gameplay).
+- `!switchmode` — RTV-style: 60% of players must request it, then mode options are listed in chat. Players vote by typing `1`, `2`, `3`, etc.
+- `!modes` — Admin only: menu-based direct switch or `!modes <name>` for instant switch.
+- Removed `!currentmode` and `!modemenu` commands.
+- Vote numbers are suppressed from chat (clean output).
+- All vote state resets on map change (fixes stuck vote bug from v3).
+- Disconnecting players properly decrement the switchmode request count.
+- Auto-rotation after map limit uses the same chat vote system.
+
+**MomSurfFix v2 (GAMMACASE fork)**
+- Fixes engine's `ClipVelocity` bug that causes speed loss on ramps.
+- Activated for both surf and kz modes via start.sh.
+- `gokz-momsurffix` (standalone) was NOT used — it caused `CheckParameters` error spam.
+
+**Retake fix**
+- `mp_maxrounds 999` (was `0`) — prevents engine from ending the match immediately.
+- `mp_match_can_clinch 0` — prevents early match end.
+- `mp_do_warmup_period 0` — skip warmup entirely, retakes plugin handles player readiness.
+- Downloaded pre-made spawn configs from splewis/csgo-retakes for all 5 retake maps.
+- Kept `game_type 0 game_mode 1` (competitive) — Custom mode breaks the retakes plugin's round restart logic.
+
+**Map expansion**
+- KZ: added kz_layercake, kz_dale, kz_dejavu, kz_rise, kz_variety_fix (removed phantom maps that were never downloaded).
+- Surf: added surf_deteriorate, surf_nuclear, surf_boreas, surf_whiteout (removed phantom maps).
+- de_cache added to competitive and DM map pools.
+- All mapcycle files and modeswitch_maps.cfg cleaned to match actual VPS maps.
+
+**Arena fix**
+- Removed `bot_quota 1` from arena.cfg (was stealing a player slot).
+- Set `bot_quota 0`, `mp_do_warmup_period 0`.
+
+**Tips system**
+- Added mode-specific tips: `!start !end !nc` for surf/kz, `!guns` for retake.
+- Updated universal tips to reference `!switchmode` instead of `!modes`.
+
+---
+
 ## Architecture Decisions
 
 ### Why restart-based mode switching (not hot-swap)
@@ -112,13 +154,18 @@ systemd manages the wrapper, which manages start.sh, which manages srcds.
 | Anyone can spam `!modes` (triggers restart) | Used `RegConsoleCmd` | Changed to `RegAdminCmd` |
 | Retry message shows 1s before quit | Message printed at quit time | Print at start of 5-second countdown |
 | Engine loads wrong metamod binary | `linux64/server.so` exists alongside correct one | Delete `linux64/server.so` |
+| Vote stuck after map change | `g_bRotationVoteActive` never reset | Added state reset in `OnMapStart` |
+| Surf/KZ ramp speed loss | Engine `ClipVelocity` bug | MomSurfFix v2 (GAMMACASE fork) |
+| Retake match ends immediately | `mp_maxrounds 0` with competitive game type | Set `mp_maxrounds 999`, `mp_match_can_clinch 0` |
+| Arena bot steals player slot | `bot_quota 1` with `bot_quota_mode "fill"` | Set `bot_quota 0` |
+| Menu vote during gameplay | Players accidentally press 1-3 while playing | Chat-based voting in modeswitch v4.1 |
 
 ### Known / Unfixed Issues
 
 | Issue | Notes |
 |-------|-------|
-| Retake stays in warmup with bots | Retakes plugin may need specific bot config or newer version |
-| Surf ramp speed loss | Some maps lose speed on ramps (likely map geometry, not config) |
+| Retake needs 2-player testing | Spawn configs downloaded, 1-player instant-wins (expected) |
+| Arena needs 2-player testing | bot_quota fixed, team joining untested with 2 players |
 | Surf zones need manual setup | Admin must `!zones` on each new map |
 | FastDL is ephemeral | Running `python3 -m http.server 27020` — needs systemd service |
 | `/home/oskar/.steam/sdk32/steamclient.so` missing | Non-fatal warning, doesn't affect functionality |
@@ -147,6 +194,7 @@ systemd manages the wrapper, which manages start.sh, which manages srcds.
 | nominations | All | Nominate maps for vote |
 | retakes | Retake | Site retakes |
 | retakes_standardallocator | Retake | Random weapon loadouts |
+| momsurffix2 | Surf, KZ | Ramp speed fix (GAMMACASE fork) |
 | SurfTimer | Surf | Timer + leaderboards (MySQL) |
 | SurfTimer-telefinder | Surf | Auto-find teleport destinations |
 | EndTouchFix | Surf | Fix zone end-touch detection |
@@ -215,16 +263,15 @@ systemd manages the wrapper, which manages start.sh, which manages srcds.
 ### High Priority
 - [ ] FastDL systemd service (replace ephemeral python HTTP)
 - [ ] srcds systemd service battle-testing (csgo.service + wrapper)
-- [ ] Fix retake mode (warmup exit, bot spawning)
+- [ ] Test retake with 2+ players (spawn configs in place)
+- [ ] Test arena 1v1 with 2 players (bot_quota fixed)
 - [ ] Set up surf zones on more maps
-- [ ] Test bot configs (DM=6, Retake=5, Arena=1)
 
 ### Medium Priority
-- [ ] Add more maps (KZ, surf, arena, + de_cache)
-- [ ] Test auto-rotation in practice
-- [ ] Surf ramp speed investigation (per-map analysis)
+- [ ] csgo.ospw.de — web dashboard (live status, connect link, stats)
 - [ ] FastDL bzip2 compression for custom maps
 - [ ] Monitor server RAM/CPU usage over time
+- [ ] Add more maps as found
 
 ### Low Priority
 - [ ] Multi-1v1 flashbang/knife round sub-plugins

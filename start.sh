@@ -129,7 +129,7 @@ case "$MODE" in
     MAPGROUP="mg_active"
     MAXPLAYERS=24
     EXTRA_ARGS="+servercfgfile surf.cfg"
-    activate_plugins SurfTimer SurfTimer-telefinder EndTouchFix \
+    activate_plugins SurfTimer SurfTimer-telefinder EndTouchFix momsurffix2 \
       st-mapchooser st-rockthevote st-nominations st-voteextend \
       rockthevote mapchooser nominations \
       weaponpaints gloves
@@ -166,7 +166,7 @@ case "$MODE" in
     MAXPLAYERS=16
     EXTRA_ARGS="+servercfgfile kz.cfg"
     activate_plugins \
-      movementapi \
+      movementapi momsurffix2 \
       gokz-core gokz-hud gokz-jumpstats gokz-localdb gokz-localranks \
       gokz-mode-vanilla gokz-mode-simplekz gokz-mode-kztimer \
       gokz-replays gokz-anticheat gokz-quiet gokz-tips \

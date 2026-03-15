@@ -132,7 +132,7 @@ connect YOUR_SERVER_IP:27015; password YOUR_PASSWORD
 
 ### How mode switching works
 
-The server uses a **restart-based** approach for mode switching. Hot-swapping plugins at runtime doesn't work reliably, cvars from the previous mode persist, `game_type` can't change, and plugin state gets corrupted.
+The server uses a **restart-based** approach for mode switching. Hot-swapping plugins at runtime doesn't work reliably — cvars from the previous mode persist, `game_type` can't change, and plugin state gets corrupted.
 
 ```
                     +-----------------+
@@ -149,7 +149,7 @@ The server uses a **restart-based** approach for mode switching. Hot-swapping pl
                              |
                     +--------v--------+
                     |     srcds       |  <-- CS:GO server process
-                    |  modeswitch.sp  |       handles !modes, rotation votes
+                    |  modeswitch.sp  |       handles !switchmode, !modes, rotation
                     +--------+--------+
                              |
               on mode switch: writes pendingmode.txt
@@ -158,14 +158,14 @@ The server uses a **restart-based** approach for mode switching. Hot-swapping pl
 ```
 
 **Files involved:**
-- `csgo-wrapper.sh` : Outer loop. Reads `pendingmode.txt`, starts `start.sh` with the correct mode, auto-restarts on exit.
-- `start.sh` : Per-boot setup. Deactivates all mode plugins, activates only the ones needed, sets `game_type`/`game_mode`, copies the right mapcycle, then `exec`s srcds.
-- `modeswitch.sp` : SourceMod plugin (always loaded). Handles `!modes` command, auto-rotation votes, periodic tips. Writes `pendingmode.txt` and calls `quit` to trigger restart.
+- `csgo-wrapper.sh` — Outer loop. Reads `pendingmode.txt`, starts `start.sh` with the correct mode, auto-restarts on exit.
+- `start.sh` — Per-boot setup. Deactivates all mode plugins, activates only the ones needed, sets `game_type`/`game_mode`, copies the right mapcycle, then `exec`s srcds.
+- `modeswitch.sp` — SourceMod plugin (always loaded). Handles `!switchmode` (player chat vote), `!modes` (admin menu), auto-rotation. Writes `pendingmode.txt` and calls `quit` to trigger restart.
 
 **State files** (in `addons/sourcemod/data/`):
-- `currentmode.txt` : Written by wrapper on each boot. Read by modeswitch.sp to detect current mode.
-- `pendingmode.txt` : Written by modeswitch.sp when a switch is requested. Read and deleted by wrapper.
-- `pendingmap.txt` : Optional map override (written by modeswitch.sp, read by wrapper, passed to start.sh).
+- `currentmode.txt` — Written by wrapper on each boot. Read by modeswitch.sp to detect current mode.
+- `pendingmode.txt` — Written by modeswitch.sp when a switch is requested. Read and deleted by wrapper.
+- `pendingmap.txt` — Optional map override (written by modeswitch.sp, read by wrapper, passed to start.sh).
 
 ### Plugin management
 
@@ -174,8 +174,8 @@ All mode-specific plugins live in `plugins/disabled/`. On each boot, `start.sh`:
 2. Copies only the plugins needed for the selected mode from `disabled/` to `plugins/`
 
 **Permanent plugins** (always in `plugins/`, never touched):
-- `NoLobbyReservation.smx` : Required for client connections
-- `modeswitch.smx` : Mode switching, rotation, tips
+- `NoLobbyReservation.smx` — Required for client connections
+- `modeswitch.smx` — Mode switching, rotation, tips
 
 ---
 
@@ -188,7 +188,7 @@ All mode-specific plugins live in `plugins/disabled/`. On each boot, `start.sh`:
 |---------|-------|
 | game_type / game_mode | 0 / 1 |
 | Config | `gamemode_competitive_server.cfg` (auto-exec on map change) |
-| Maps | de_dust2, de_mirage, de_inferno, de_overpass, de_nuke, de_ancient, de_vertigo, de_anubis |
+| Maps | de_dust2, de_mirage, de_inferno, de_overpass, de_nuke, de_ancient, de_vertigo, de_anubis, de_cache |
 | Plugins | weaponpaints, gloves, kento_rankme, rockthevote, mapchooser, nominations |
 
 ### Retake
@@ -201,7 +201,7 @@ All mode-specific plugins live in `plugins/disabled/`. On each boot, `start.sh`:
 | Maps | Same as competitive |
 | Plugins | retakes, retakes_standardallocator + cosmetics + RTV |
 
-**Status:** Partially working. The retakes plugin can be finicky with warmup behavior and bot spawning. May need further tuning.
+**Note:** Requires per-map spawn configs in `addons/sourcemod/configs/retakes/` (download from [splewis/csgo-retakes](https://github.com/splewis/csgo-retakes/tree/master/configs/retakes)). Use `!edit` as admin to fine-tune spawn positions.
 
 ### Surf
 Surf maps with timer, leaderboards, and movement physics.
@@ -210,13 +210,13 @@ Surf maps with timer, leaderboards, and movement physics.
 |---------|-------|
 | game_type / game_mode | 3 / 0 (Custom) |
 | Config | `surf.cfg` (via `+servercfgfile`) |
-| Maps | 31 maps, Tier 1-6 |
+| Maps | surf_beginner, surf_utopia_v3, surf_rookie_fix, surf_mesa, surf_kitsune_noreflect, surf_deteriorate, surf_nuclear, surf_boreas, surf_whiteout |
 | Plugins | SurfTimer, SurfTimer-telefinder, EndTouchFix, st-mapchooser, st-rockthevote, st-nominations, st-voteextend + cosmetics + standard RTV |
 | Database | MySQL (MariaDB) — `surftimer` entry in databases.cfg |
 
 **Zones:** Each map needs zones defined manually. Join as admin and type `!zones` to set start/end zones per map.
 
-**Known issue:** Some maps have ramp speed loss (you slow to 0 on certain ramps). This appears to be map-specific, not a config issue. `sv_ramp_fix` does not exist in this engine branch.
+**Ramp fix:** MomSurfFix v2 (GAMMACASE fork) is installed — fixes the engine's `ClipVelocity` bug that causes speed loss on ramps.
 
 ### FFA Deathmatch
 Free-for-all instant respawn deathmatch. No special plugin needed.
@@ -225,7 +225,7 @@ Free-for-all instant respawn deathmatch. No special plugin needed.
 |---------|-------|
 | game_type / game_mode | 1 / 2 (DM) |
 | Config | `dm.cfg` (via `+servercfgfile`) |
-| Maps | de_dust2, de_mirage, de_inferno |
+| Maps | de_dust2, de_mirage, de_inferno, de_cache |
 | Plugins | cosmetics + RTV |
 
 **Important:** DM **must** use `game_type 1 game_mode 2` — using Custom (3/0) breaks DM spawn behavior.
@@ -249,13 +249,13 @@ Movement/parkour maps with timer, checkpoints, jumpstats, and leaderboards.
 |---------|-------|
 | game_type / game_mode | 3 / 0 (Custom) |
 | Config | `kz.cfg` (via `+servercfgfile`) |
-| Maps | kz_beginnerblock_go, kz_checkmate, kz_nature, kz_olympus, kz_reaching |
+| Maps | kz_beginnerblock_go, kz_rise, kz_layercake, kz_dejavu, kz_dale, kz_variety_fix |
 | Plugins | movementapi + all gokz-* sub-plugins + cosmetics + RTV |
 | Database | SQLite (default) or MySQL |
 
 GOKZ sub-plugins: core, hud, jumpstats, localdb, localranks, mode-vanilla, mode-simplekz, mode-kztimer, replays, anticheat, quiet, tips, saveloc, goto, spec, pistol, chat.
 
-**Note:** `gokz-momsurffix` exists but is NOT activated — it causes `CheckParameters` error spam.
+**Note:** MomSurfFix v2 (GAMMACASE fork) is loaded for KZ as well, fixing ramp speed loss.
 
 ---
 
@@ -265,12 +265,12 @@ GOKZ sub-plugins: core, hud, jumpstats, localdb, localranks, mode-vanilla, mode-
 
 | Command | Description |
 |---------|-------------|
+| `!switchmode` | Request a mode switch (needs 60% of players, then chat vote) |
+| `!rtv` | Vote to change map (Rock The Vote) |
+| `!nominate` | Nominate a map for next vote |
 | `!ws` | Set weapon skins |
 | `!knife` | Set knife skin |
 | `!gloves` | Set glove skin |
-| `!rtv` | Vote to change map (Rock The Vote) |
-| `!nominate` | Nominate a map for next vote |
-| `!currentmode` | Show current mode, map, and maps remaining |
 
 ### KZ-specific
 
@@ -278,7 +278,9 @@ GOKZ sub-plugins: core, hud, jumpstats, localdb, localranks, mode-vanilla, mode-
 |---------|-------------|
 | `!menu` | Main KZ menu (set/load checkpoints) |
 | `!options` | Configure KZ settings |
-| `!r` | Restart current run |
+| `!start` | Teleport to start |
+| `!end` | Teleport to end |
+| `!nc` | Toggle noclip |
 
 ### Surf-specific
 
@@ -286,19 +288,27 @@ GOKZ sub-plugins: core, hud, jumpstats, localdb, localranks, mode-vanilla, mode-
 |---------|-------------|
 | `!r` | Restart (teleport to start) |
 | `!s` | Go back to stage start |
+| `!start` | Set start position |
+| `!end` | Teleport to end |
+| `!nc` | Toggle noclip |
 | `!zones` | Zone setup (admin only) |
+
+### Retake-specific
+
+| Command | Description |
+|---------|-------------|
+| `!guns` | Choose your weapons |
 
 ### Admin commands
 
 | Command | Description |
 |---------|-------------|
-| `!modes` | Open mode vote for all players |
-| `!modes surf` | Direct switch to surf (5s countdown, no vote) |
-| `!modes dm` | Direct switch to DM |
+| `!modes` | Open admin mode switch menu |
+| `!modes surf` | Direct switch to surf (5s countdown) |
 | `!map de_mirage` | Change map within current mode |
 | `!maps` | Open map selection menu |
 
-**`!modes` is admin-only** to prevent restart spam. The auto-rotation vote (which triggers automatically after X maps) is democratic — all players vote.
+**Mode switching for players** uses `!switchmode` — when 60% of players request it, a chat-based vote starts. Players vote by typing `1`, `2`, `3`, etc. in chat. No menus pop up during gameplay.
 
 ---
 
@@ -315,12 +325,13 @@ The server automatically rotates modes. After a configurable number of maps, a v
 | Arena | 1 (30 rounds) |
 | KZ | 1 (45 min timelimit) |
 
-When rotation triggers:
-1. Players get a 20-second vote menu with all 6 modes
-2. Winning mode is announced in chat
-3. 5-second countdown with `retry` instructions
-4. Server quits, wrapper restarts with the new mode
-5. Players type `retry` in console to reconnect
+When rotation triggers (or `!switchmode` reaches 60%):
+1. Available modes are listed in chat (current mode excluded)
+2. Players type `1`, `2`, `3`, etc. to vote (25 seconds)
+3. Winning mode is announced in chat
+4. 5-second countdown with `retry` instructions
+5. Server quits, wrapper restarts with the new mode
+6. Players type `retry` in console to reconnect
 
 If no one votes, a random different mode is picked.
 
@@ -466,7 +477,7 @@ csgo-server-ospw2026/
 |-- csgo-wrapper.sh                  # Auto-restart wrapper (reads mode files)
 |-- update.sh                        # SteamCMD game update script
 |-- csgo.service                     # systemd unit (uses wrapper)
-|-- modeswitch.sp                    # SourceMod plugin source (v3.0)
+|-- modeswitch.sp                    # SourceMod plugin source (v4.1)
 |-- modeswitch_maps.cfg              # Per-mode map lists for !maps menu
 |-- .env.example                     # Template for credentials
 |-- databases.cfg                    # SourceMod database config
@@ -525,7 +536,7 @@ These are hard-won discoveries from setting up CS:GO 2026. Save yourself hours o
 ### SourceMod admin
 
 - `!modes` was renamed from `!mode` to avoid conflict with GOKZ's `!mode` command (which switches KZ movement modes).
-- `!modes` is admin-only (`RegAdminCmd`) to prevent restart spam — the auto-rotation vote is the democratic element.
+- `!modes` is admin-only. Players use `!switchmode` (60% threshold, chat-based voting) to democratically switch modes.
 
 ---
 
@@ -575,12 +586,11 @@ cd /srv/csgo-host/csgo/addons/sourcemod/scripting
 
 ## Known Issues / TODO
 
-- **Retake mode** — warmup doesn't exit properly with bots, needs more plugin work
-- **Surf ramp speed** — some maps lose speed on ramps (likely map-specific)
+- **Retake mode** — needs testing with 2+ players; spawn configs downloaded but may need `!edit` tuning
+- **Arena 1v1** — needs testing with 2 players after bot_quota fix
 - **Surf zones** — need manual setup per map via `!zones`
 - **FastDL** — currently an ephemeral python HTTP server, needs a proper systemd service
 - **srcds systemd** — csgo.service works but hasn't been battle-tested with the wrapper
-- **Bot configs** — DM(6 bots), Retake(5), Arena(1) configs added but not all tested thoroughly
 
 ## Credits
 
@@ -591,6 +601,7 @@ cd /srv/csgo-host/csgo/addons/sourcemod/scripting
 - [surftimer/SurfTimer](https://github.com/surftimer/SurfTimer) — surf timer + leaderboards
 - [KZGlobalTeam/gokz](https://github.com/KZGlobalTeam/gokz) — KZ/climb plugin
 - [danzayau/MovementAPI](https://github.com/danzayau/MovementAPI) — GOKZ dependency
+- [GAMMACASE/MomSurfFix](https://github.com/GAMMACASE/MomSurfFix) — ramp speed fix (v2)
 - [nicedoc/PTaH](https://github.com/nicedoc/PTaH) — extension for weapon skin plugins
 - [kgns/weapons](https://github.com/kgns/weapons) + [kgns/gloves](https://github.com/kgns/gloves) — !ws !knife !gloves
 - [CsGoat/csgo-2026-server-setup-script](https://github.com/CsGoat/csgo-2026-server-setup-script) — reference setup
